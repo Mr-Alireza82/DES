@@ -1,6 +1,6 @@
 # 🔐 DES and Triple DES — Data Encryption Standard
 
-> A from-zero guide to DES and Triple DES (3DES / TDEA): what encryption and block ciphers are, how DES works step by step with every table of the standard, a complete worked example of all 16 rounds, why Triple DES exists, and where both still run in payment systems — PIN blocks, key encryption, key check values and the Retail MAC.
+> A from-zero guide to DES and Triple DES (3DES / TDEA): what encryption and block ciphers are, how DES works step by step with every table of the standard, a complete worked example of all 16 rounds, why Triple DES exists, how longer messages are padded and chained (ECB, CBC, IV), and where both still run in payment systems — PIN blocks, key encryption, key check values and the Retail MAC.
 
 > [!NOTE]
 > **Prerequisites:** DES moves **bits** and mixes them with **XOR**. If you are not yet at home with hexadecimal, bits and bytes, read [Base Conversion](https://github.com/Mr-Alireza82/Base-Conversion) first; for XOR and why it can undo itself, read [XOR — Exclusive OR](https://github.com/Mr-Alireza82/XOR). Links like *[XOR §6]* point to their sections.
@@ -38,22 +38,28 @@
 16. [Why Not Double DES?](#16-why-not-double-des)
 17. [Triple DES — Encrypt, Decrypt, Encrypt](#17-triple-des--encrypt-decrypt-encrypt)
 
-**Part E — DES in Payment Systems**
+**Part E — Longer Messages: Padding, Modes and the IV**
 
-18. [Where DES Still Runs](#18-where-des-still-runs)
-19. [Key Check Value](#19-key-check-value)
-20. [Parity Bits and Weak Keys](#20-parity-bits-and-weak-keys)
+18. [Padding](#18-padding)
+19. [ECB — Every Block Alone](#19-ecb--every-block-alone)
+20. [CBC — Blocks in a Chain](#20-cbc--blocks-in-a-chain)
 
-**Part F — In Code**
+**Part F — DES in Payment Systems**
 
-21. [Two Ways: Standard and Paper](#21-two-ways-standard-and-paper)
-22. [Using the Library](#22-using-the-library)
+21. [Where DES Still Runs](#21-where-des-still-runs)
+22. [Key Check Value](#22-key-check-value)
+23. [Parity Bits and Weak Keys](#23-parity-bits-and-weak-keys)
 
-**Part G — Reference**
+**Part G — In Code**
 
-23. [Cheat Sheet](#23-cheat-sheet)
-24. [Practice](#24-practice)
-25. [Conclusion](#25-conclusion)
+24. [Two Ways: Standard and Paper](#24-two-ways-standard-and-paper)
+25. [Using the Library](#25-using-the-library)
+
+**Part H — Reference**
+
+26. [Cheat Sheet](#26-cheat-sheet)
+27. [Practice](#27-practice)
+28. [Conclusion](#28-conclusion)
 
 ---
 
@@ -233,7 +239,7 @@ The key schedule turns the one 64-bit key into sixteen 48-bit round keys.
 
 ### Step 1 — PC-1: drop the parity bits and split (64 → 56)
 
-Every 8th bit of the key (bits 8, 16, …, 64) is a **parity bit** ([§20](#20-parity-bits-and-weak-keys)) and is thrown away. The other 56 are reordered:
+Every 8th bit of the key (bits 8, 16, …, 64) is a **parity bit** ([§23](#23-parity-bits-and-weak-keys)) and is thrown away. The other 56 are reordered:
 
 | PC-1 | | | | | | |
 |---|---|---|---|---|---|---|
@@ -662,11 +668,133 @@ The clear ISO 9564 format 0 PIN block `041225EEEEEEEEEE` *[[XOR §13](https://gi
 > [!TIP]
 > **Do we need a separate "3DES" algorithm?** No. Triple DES is three calls to DES. Everything that is hard is in single DES; Triple DES is three lines on top of it — that is why both live in this one repository.
 
+### Encrypting is E-D-E, decrypting is D-E-D
+
+Both directions exist for Triple DES, exactly as for DES. **Decryption undoes the three steps in reverse order**, so each step turns into its opposite:
+
+| | Step 1 | Step 2 | Step 3 |
+|---|---|---|---|
+| **Encrypt** (E-D-E) | encrypt with $K_1$ | decrypt with $K_2$ | encrypt with $K_3$ |
+| **Decrypt** (D-E-D) | decrypt with $K_3$ | encrypt with $K_2$ | decrypt with $K_1$ |
+
+The "decrypt with $K_2$" in the middle of encryption does not undo anything, because $K_2$ is a different key: it is just one more scramble. It is a decryption only by name — chosen so that $K_1 = K_2 = K_3$ collapses into single DES.
+
 ---
 
-# Part E — DES in Payment Systems
+# Part E — Longer Messages: Padding, Modes and the IV
 
-## 18. Where DES Still Runs
+DES encrypts exactly **one 8-byte block**. Real data is longer, and rarely a multiple of 8. Three choices, made *outside* DES, turn the block machine into a message machine:
+
+| Choice | Question it answers | Options in this library |
+|---|---|---|
+| **Algorithm** | Which block machine? | `DES`, `TRIPLE_DES` |
+| **Padding** | How is the last block filled up? | `NONE`, `ISO_9797_1_METHOD_1`, `ISO_9797_1_METHOD_2`, `PKCS7` |
+| **Mode** | How are the blocks connected? | `ECB`, `CBC` |
+| **IV** | Where does the chain start? | 8 bytes — CBC only |
+
+All three are the same for every block cipher: AES uses the same padding methods and modes with 16-byte blocks.
+
+## 18. Padding
+
+Take the message `PAYMENT123` — 10 bytes: `50 41 59 4D 45 4E 54 31 32 33`. That is one full block and 2 bytes left over. Padding fills the last block:
+
+| Padding | Rule | Last block of `PAYMENT123` | Removable? |
+|---|---|---|---|
+| None | Data must already be whole blocks | ✗ error: 10 is not a multiple of 8 | — |
+| ISO/IEC 9797-1 method 1 | Add `00` until whole; add nothing if already whole | `32 33 00 00 00 00 00 00` | ✗ the data could itself end in `00` |
+| ISO/IEC 9797-1 method 2 | **Always** add one `80`, then `00` until whole | `32 33 80 00 00 00 00 00` | ✓ cut after the last `80` |
+| PKCS #7 | Add N bytes of value N (1–8) | `32 33 06 06 06 06 06 06` | ✓ the last byte says how many to cut |
+
+When the data is already whole blocks, method 2 and PKCS #7 add a **full extra block** (`80 00 … 00` or `08 08 … 08`), so that the receiver always finds padding to remove. Method 1 adds nothing.
+
+> [!NOTE]
+> "Zero padding" *is* ISO 9797-1 method 1. The [Retail MAC](https://github.com/Mr-Alireza82/ANSI-X9.19-Retail-MAC-Algorithm) and most ISO 8583 MACs use it; it is fine there because the MAC is only compared, never "decrypted back". For encrypting data you want back, use method 2 or PKCS #7. The padding method is part of the agreement between the two systems — both sides must use the same one.
+
+## 19. ECB — Every Block Alone
+
+**Electronic Codebook**: cut the padded data into blocks and encrypt each one on its own.
+
+$$C_i = E_K(P_i) \qquad\qquad P_i = D_K(C_i)$$
+
+```text
+   P1          P2          P3
+   │           │           │
+ E(K)        E(K)        E(K)
+   │           │           │
+   C1          C2          C3
+```
+
+No IV. Simple, and blocks can be processed in any order. But **equal input blocks give equal output blocks**. Two customers with the same PIN block:
+
+| | Block 1 | Block 2 |
+|---|---|---|
+| Plain | `041225EEEEEEEEEE` | `041225EEEEEEEEEE` |
+| ECB, TDES key `0123456789ABCDEF FEDCBA9876543210` | `2A3D408A1977DDE9` | `2A3D408A1977DDE9` ← same, visible |
+
+An attacker sees that the two blocks are equal without breaking anything. That is why ECB is used only for **single blocks that already look random**: one PIN block, one key under a key-encryption key. Never for longer messages.
+
+## 20. CBC — Blocks in a Chain
+
+**Cipher Block Chaining**: before a block is encrypted, it is XORed *[[XOR](https://github.com/Mr-Alireza82/XOR)]* with the previous **encrypted** block. The first block has no previous block, so it is XORed with an 8-byte **initialization vector (IV)**.
+
+$$C_0 = IV \qquad C_i = E_K(P_i \oplus C_{i-1}) \qquad\qquad P_i = D_K(C_i) \oplus C_{i-1}$$
+
+```text
+          P1               P2               P3
+          │                │                │
+ IV ──►  XOR     ┌──────► XOR     ┌──────► XOR
+          │      │         │      │         │
+        E(K)     │       E(K)     │       E(K)
+          │      │         │      │         │
+          C1 ────┘         C2 ────┘         C3
+```
+
+Every encrypted block now depends on **all** blocks before it. The same two PIN blocks, CBC with IV `0000000000000000`:
+
+| | Block 1 | Block 2 |
+|---|---|---|
+| Plain $P_i$ | `041225EEEEEEEEEE` | `041225EEEEEEEEEE` |
+| $P_i \oplus C_{i-1}$ | `041225EEEEEEEEEE` (⊕ IV = 0) | `2E2F6564F7993307` (⊕ $C_1$) |
+| CBC $C_i$ | `2A3D408A1977DDE9` | `12652D81BCB04D03` ← different |
+
+### CBC is the Retail MAC's engine
+
+`PAYMENT123` with method 1 padding, CBC, single DES key $K_1$ = `0123456789ABCDEF`, IV = zeros:
+
+| $i$ | $P_i$ | $P_i \oplus C_{i-1}$ | $C_i = E_{K_1}(\dots)$ |
+|---|---|---|---|
+| 1 | `5041594D454E5431` | `5041594D454E5431` | `355227E11D967D54` |
+| 2 | `3233000000000000` | `076127E11D967D54` | `775332C133888CD3` |
+
+These are exactly $H_1$ and $H_2$ of the [Retail MAC article](https://github.com/Mr-Alireza82/ANSI-X9.19-Retail-MAC-Algorithm): its chaining phase **is** DES-CBC. The MAC only adds the final "decrypt with $K_2$, encrypt with $K_1$" on the last block.
+
+### Rules for the IV
+
+| Rule | Why |
+|---|---|
+| Exactly 8 bytes (one block) | It stands in for "the previous block" |
+| Both sides use the same IV | Decryption needs the same chain start |
+| Not secret | It may travel with the message |
+| Unpredictable for encryption of data | A fixed IV makes equal first blocks visible again |
+| All zeros for MACs | Fixed by the MAC standards (ISO 9797-1, X9.19) |
+| Never given for ECB | ECB has no chain; the library rejects it |
+
+### In code
+
+```java
+DesCipher cipher = DesCipher.of(DesAlgorithm.TRIPLE_DES, BlockMode.CBC, Padding.ISO_9797_1_METHOD_2);
+byte[] encrypted = cipher.encrypt(key, iv, data);     // CBC: key, IV, data
+byte[] plain     = cipher.decrypt(key, iv, encrypted);
+
+DesCipher pinBlocks = DesCipher.of(DesAlgorithm.TRIPLE_DES, BlockMode.ECB, Padding.NONE);
+byte[] field52 = pinBlocks.encrypt(tpk, clearPinBlock);  // ECB: no IV
+```
+
+---
+
+# Part F — DES in Payment Systems
+
+## 21. Where DES Still Runs
 
 | Use | Algorithm | What is encrypted |
 |---|---|---|
@@ -675,11 +803,11 @@ The clear ISO 9564 format 0 PIN block `041225EEEEEEEEEE` *[[XOR §13](https://gi
 | Retail MAC (ANSI X9.19) | DES for each block, TDES finish | The MAC over a message *[[Retail MAC](https://github.com/Mr-Alireza82/ANSI-X9.19-Retail-MAC-Algorithm)]* |
 | DUKPT (ANSI X9.24, TDES variant) | TDES | A unique key per transaction |
 | EMV cryptograms (ARQC / ARPC) | TDES | Card-generated transaction proof |
-| Key check value | DES / TDES | Eight zero bytes ([§19](#19-key-check-value)) |
+| Key check value | DES / TDES | Eight zero bytes ([§22](#22-key-check-value)) |
 
 The [Retail MAC](https://github.com/Mr-Alireza82/ANSI-X9.19-Retail-MAC-Algorithm) example can be checked with this library: $E_{K_1}(5041594D454E5431)$ = `355227E11D967D54`, $E_{K_1}(076127E11D967D54)$ = `775332C133888CD3`, $D_{K_2}(775332C133888CD3)$ = `5686442BF278651D`, $E_{K_1}(5686442BF278651D)$ = `89FA1AAA2C6E27ED` — all part of the tests.
 
-## 19. Key Check Value
+## 22. Key Check Value
 
 How do two people confirm they loaded **the same** key without showing it? They both encrypt eight zero bytes with it and compare the first 3 bytes (6 hex digits). This is the **key check value (KCV)**.
 
@@ -691,7 +819,7 @@ How do two people confirm they loaded **the same** key without showing it? They 
 
 Key custodians read the KCV aloud after entering their key components *[[XOR §12](https://github.com/Mr-Alireza82/XOR#12-key-components)]*: if the KCV matches the one printed on the key form, the key is right. Three bytes reveal practically nothing about the key.
 
-## 20. Parity Bits and Weak Keys
+## 23. Parity Bits and Weak Keys
 
 ### Parity
 
@@ -720,13 +848,13 @@ There are also 12 semi-weak keys (pairs that undo each other). Proper random key
 
 ---
 
-# Part F — In Code
+# Part G — In Code
 
-## 21. Two Ways: Standard and Paper
+## 24. Two Ways: Standard and Paper
 
-| | Standard way — `Des` | Paper way — `SimpleDes` |
+| | Standard way — `DesCipher`, `Des` | Paper way — `SimpleDesCipher`, `SimpleDes` |
 |---|---|---|
-| How | Java's own `javax.crypto.Cipher` (`DES` and `DESede`, ECB, no padding) | Every table of this article, bit by bit |
+| How | Java's own `javax.crypto.Cipher` (`DES` and `DESede`, ECB and CBC); padding by this library | Every table of this article, bit by bit; CBC chaining written out with `Xor` |
 | Speed | Fast, optimised | Slow |
 | Timing safety | Platform implementation | Not hardened — learning only |
 | Uses | Real code | Learning, checking by hand, a second opinion in tests |
@@ -734,7 +862,7 @@ There are also 12 semi-weak keys (pairs that undo each other). Proper random key
 
 The paper way is built from the two earlier libraries, using **their standard (quick) ways**: every mix is `Xor.xor` from [XOR](https://github.com/Mr-Alireza82/XOR), and every hex ↔ bytes step is `ByteEncoding` from [Base Conversion](https://github.com/Mr-Alireza82/Base-Conversion).
 
-**How it is tested:** both ways are compared on known answers (this article's example, the Retail MAC values, the KCV), on 300 random keys and blocks for DES and for 2- and 3-key Triple DES, and in both directions. The steps of the paper way are checked against Part C.
+**How it is tested:** both ways are compared on known answers (this article's example, the FIPS 81 ECB and CBC vectors, the Retail MAC chaining values, the KCV), on random keys and data for every combination of algorithm, mode and padding, and in both directions. The steps of the paper way are checked against Part C.
 
 **Run it yourself:** the code is in [`src/main/java`](src/main/java/io/github/mralireza82/des) and the tests in [`src/test/java`](src/test/java/io/github/mralireza82/des). With Java 17 or newer installed:
 
@@ -751,26 +879,36 @@ repositories {
 }
 
 dependencies {
-    implementation("com.github.Mr-Alireza82:DES:v1.0.0")
+    implementation("com.github.Mr-Alireza82:DES:v1.1.0")
 }
 ```
 
-## 22. Using the Library
+## 25. Using the Library
 
 Package `io.github.mralireza82.des`, pure Java 17. It depends on [XOR](https://github.com/Mr-Alireza82/XOR), which brings [Base Conversion](https://github.com/Mr-Alireza82/Base-Conversion).
 
 | Class | Use it for |
 |---|---|
-| `Des` | The standard way: `encrypt`, `decrypt`, `encryptTriple`, `decryptTriple` on one 8-byte block |
-| `SimpleDes` | The paper way: the same four methods, plus `roundKeys` and `encryptWithSteps` |
+| `DesCipher` | **Messages**, the standard way: `DesCipher.of(algorithm, mode, padding)`, then `encrypt` / `decrypt` |
+| `SimpleDesCipher` | **Messages**, the paper way: the same API |
+| `DesAlgorithm` / `BlockMode` / `Padding` | The options: `DES`, `TRIPLE_DES` / `ECB`, `CBC` / `NONE`, `ISO_9797_1_METHOD_1`, `ISO_9797_1_METHOD_2`, `PKCS7` |
+| `Des` | **One block**, the standard way: `encrypt`, `decrypt`, `encryptTriple`, `decryptTriple` |
+| `SimpleDes` | **One block**, the paper way: the same four, plus `roundKeys` and `encryptWithSteps` |
 | `DesKeys` | `checkValue` (KCV), `hasOddParity`, `withOddParity` |
-| `DesSteps` | Every intermediate value of one encryption, in hex |
+| `DesSteps` | Every intermediate value of one block encryption, in hex |
 
 ```java
 byte[] key   = ByteEncoding.fromHex("133457799BBCDFF1");
 byte[] block = ByteEncoding.fromHex("0123456789ABCDEF");
 
-// Standard way
+// Messages: choose algorithm, mode and padding once, then encrypt / decrypt
+DesCipher cbc = DesCipher.of(DesAlgorithm.DES, BlockMode.CBC, Padding.ISO_9797_1_METHOD_1);
+byte[] message = "PAYMENT123".getBytes(StandardCharsets.US_ASCII);
+ByteEncoding.toHex(cbc.encrypt(ByteEncoding.fromHex("0123456789ABCDEF"), new byte[8], message));
+                                                                    // "355227E11D967D54775332C133888CD3"
+SimpleDesCipher.of(DesAlgorithm.DES, BlockMode.CBC, Padding.ISO_9797_1_METHOD_1);  // same API, paper way
+
+// One block, standard way
 ByteEncoding.toHex(Des.encrypt(key, block));                        // "85E813540F0AB405"
 byte[] tpk = ByteEncoding.fromHex("0123456789ABCDEFFEDCBA9876543210");
 ByteEncoding.toHex(Des.encryptTriple(tpk, ByteEncoding.fromHex("041225EEEEEEEEEE")));  // "2A3D408A1977DDE9"
@@ -785,18 +923,20 @@ steps.output();                                                     // "85E81354
 
 **Rules:**
 
-- A block is exactly 8 bytes; a DES key 8 bytes; a Triple DES key 16 or 24 bytes. Anything else throws `IllegalArgumentException`.
-- One call = one block (ECB). Padding and modes such as CBC belong to the caller, e.g. the Retail MAC.
-- Inputs are never changed.
+- A DES key is 8 bytes; a Triple DES key 16 or 24 bytes; a block and an IV 8 bytes. Anything else throws `IllegalArgumentException`.
+- ECB: `encrypt(key, data)`, no IV. CBC: `encrypt(key, iv, data)`, IV required. Mixing them up throws.
+- With padding `NONE` the data must be whole blocks. Method 1 padding cannot be removed: decryption returns the padded data.
+- Wrong padding after decryption (usually a wrong key or IV) throws `IllegalArgumentException`.
+- Inputs are never changed; ciphers are immutable and thread-safe.
 
 > [!CAUTION]
 > Real payment keys never appear in application memory as plain bytes: they live inside an HSM or the terminal's secure PIN pad, and the application only asks those devices to use them. Use this library for learning, tests, simulators and tools — not to hold production keys.
 
 ---
 
-# Part G — Reference
+# Part H — Reference
 
-## 23. Cheat Sheet
+## 26. Cheat Sheet
 
 | Item | Value |
 |---|---|
@@ -810,10 +950,14 @@ steps.output();                                                     // "85E81354
 | Output | $FP(R_{16} \parallel L_{16})$ |
 | Decryption | Same, round keys $K_{16} \dots K_1$ |
 | Triple DES | $E_{K_3}(D_{K_2}(E_{K_1}(P)))$; 16-byte key → $K_3 = K_1$ |
+| Triple DES decryption | $D_{K_1}(E_{K_2}(D_{K_3}(C)))$ — D-E-D |
 | KCV | First 3 bytes of $E_K(00 \dots 00)$ |
+| ECB | $C_i = E_K(P_i)$ — no IV; single blocks only |
+| CBC | $C_i = E_K(P_i \oplus C_{i-1})$, $C_0 = IV$ (8 bytes) |
+| Padding | ISO 9797-1 M1: `00 …`; M2: `80 00 …`; PKCS #7: N bytes of N |
 | Example | $DES_{133457799BBCDFF1}(0123456789ABCDEF) = 85E813540F0AB405$ |
 
-## 24. Practice
+## 27. Practice
 
 1. How many of the 64 bits of a DES key change the result?
 2. Look up S1 for the input `011011`.
@@ -838,7 +982,7 @@ steps.output();                                                     // "85E81354
 
 ---
 
-## 25. Conclusion
+## 28. Conclusion
 
 - DES is a **symmetric block cipher**: 8-byte block, 8-byte key with 56 effective bits, 16 rounds.
 - Each round is a **Feistel** step: $L_i = R_{i-1}$, $R_i = L_{i-1} \oplus f(R_{i-1}, K_i)$ — decryption is the same with reversed keys, thanks to XOR.

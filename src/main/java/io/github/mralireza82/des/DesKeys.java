@@ -67,6 +67,16 @@ public final class DesKeys {
         }
     }
 
+    /** The 24-byte form K1 K2 K3 that Java's DESede wants; a 16-byte key K1 K2 becomes K1 K2 K1. */
+    static byte[] threeKeyForm(byte[] key) {
+        byte[][] parts = tripleParts(key);
+        byte[] full = new byte[24];
+        for (int i = 0; i < 3; i++) {
+            System.arraycopy(parts[i], 0, full, 8 * i, 8);
+        }
+        return full;
+    }
+
     /** K1, K2, K3 of a Triple DES key. A 16-byte (double-length) key reuses K1 as K3. */
     static byte[][] tripleParts(byte[] key) {
         Objects.requireNonNull(key, "key");

@@ -31,22 +31,12 @@ public final class Des {
 
     /** Triple DES encryption of one block with a 16- or 24-byte key. */
     public static byte[] encryptTriple(byte[] key, byte[] block) {
-        return run("DESede", Cipher.ENCRYPT_MODE, toThreeKeys(key), block);
+        return run("DESede", Cipher.ENCRYPT_MODE, DesKeys.threeKeyForm(key), block);
     }
 
     /** Triple DES decryption of one block with a 16- or 24-byte key. */
     public static byte[] decryptTriple(byte[] key, byte[] block) {
-        return run("DESede", Cipher.DECRYPT_MODE, toThreeKeys(key), block);
-    }
-
-    /** Java's DESede always wants 24 bytes: K1 K2 K3. */
-    private static byte[] toThreeKeys(byte[] key) {
-        byte[][] parts = DesKeys.tripleParts(key);
-        byte[] full = new byte[24];
-        for (int i = 0; i < 3; i++) {
-            System.arraycopy(parts[i], 0, full, 8 * i, 8);
-        }
-        return full;
+        return run("DESede", Cipher.DECRYPT_MODE, DesKeys.threeKeyForm(key), block);
     }
 
     private static byte[] run(String algorithm, int mode, byte[] key, byte[] block) {
